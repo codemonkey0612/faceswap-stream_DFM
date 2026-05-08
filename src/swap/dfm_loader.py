@@ -76,7 +76,11 @@ class DFMLoader:
 
         input_name = inputs[0].name
         input_shape = inputs[0].shape   # e.g. [1, 3, 256, 256]
-        input_size = int(input_shape[-1]) if len(input_shape) >= 2 else 256
+        input_size = (
+            int(input_shape[-1])
+            if (len(input_shape) >= 2 and isinstance(input_shape[-1], int))
+            else 256
+        )
 
         # Identify face and mask output names by convention.
         output_names = [o.name for o in outputs]
@@ -150,7 +154,6 @@ class DFMLoader:
 def _ellipse_mask(h: int, w: int) -> np.ndarray:
     """Solid soft-edged ellipse mask for models without a mask output."""
     mask = np.zeros((h, w), dtype=np.float32)
-    cv2_available = True
     try:
         import cv2
         cx, cy = w // 2, h // 2
@@ -158,6 +161,9 @@ def _ellipse_mask(h: int, w: int) -> np.ndarray:
                     angle=0, startAngle=0, endAngle=360,
                     color=1.0, thickness=-1)
         mask = cv2.GaussianBlur(mask, (31, 31), 0)
-    except Exception:
+    except Exception as exc:
+        structlog.get_logger("swap.dfm_loader").warning(
+            "ellipse_mask_fallback", exc=str(exc), note="using solid mask"
+        )
         mask[:] = 1.0
     return mask

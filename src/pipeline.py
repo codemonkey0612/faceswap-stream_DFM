@@ -62,7 +62,7 @@ class Pipeline:
         self._monitor = Monitor(
             MonitorConfig(
                 min_confidence=fs.min_confidence,
-                min_face_area_ratio=config.detection.min_face_area_ratio,
+                min_face_area_ratio=fs.min_face_area_ratio,
             )
         )
 
@@ -206,16 +206,16 @@ class Pipeline:
 def _restore_occluded(
     composited: np.ndarray,
     original: np.ndarray,
-    hand_mask: np.ndarray,
+    occluder_mask: np.ndarray,
 ) -> np.ndarray:
-    """Blend original frame back where hands are detected.
+    """Blend original frame back where an occluder (hand, hair, XSeg object) is detected.
 
-    composited : (H, W, 3) uint8 — frame after face swap
-    original   : (H, W, 3) uint8 — unmodified webcam frame
-    hand_mask  : (H, W) float32 in [0, 1] — 1.0 = hand pixel
+    composited    : (H, W, 3) uint8 — frame after face swap
+    original      : (H, W, 3) uint8 — unmodified webcam frame
+    occluder_mask : (H, W) float32 in [0, 1] — 1.0 = occluder pixel
 
-    Returns (H, W, 3) uint8 with swap pixels replaced by originals in hand regions.
+    Returns (H, W, 3) uint8 with swap pixels replaced by originals in occluded regions.
     """
-    alpha = hand_mask[:, :, np.newaxis]  # (H, W, 1) for broadcasting
+    alpha = occluder_mask[:, :, np.newaxis]  # (H, W, 1) for broadcasting
     out = alpha * original.astype(np.float32) + (1.0 - alpha) * composited.astype(np.float32)
     return np.clip(out, 0, 255).astype(np.uint8)
