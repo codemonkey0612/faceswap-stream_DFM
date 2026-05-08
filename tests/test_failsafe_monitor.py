@@ -42,18 +42,23 @@ def test_pre_swap_tiny_face_fires(frame_shape):
 
 
 def test_pre_swap_bbox_out_of_frame_fires(frame_shape):
+    # Tolerance = min(w, h) * 0.15. For 160x120, tolerance=18px.
+    # Use x1=-25: well outside tolerance, center still inside frame.
     m = Monitor()
     h, w = frame_shape[0], frame_shape[1]
-    det = Detection(bbox=(-10, 10, 50, 50), confidence=0.9)
+    tol = int(min(w, h) * 0.15) + 5   # clearly past tolerance
+    det = Detection(bbox=(-tol, 10, 50, 50), confidence=0.9)
     r = m.check_pre_swap(frame_shape, detections=[det])
     assert r.fired and r.trigger is PreSwapTrigger.BBOX_OUT_OF_FRAME
 
 
 def test_pre_swap_bbox_past_right_edge_fires(frame_shape):
-    # Use w+10: clearly outside frame, not subpixel jitter (tolerance is 4px).
+    # Tolerance = min(w, h) * 0.15. For 160x120, tolerance=18px.
+    # Use x2 = w + tol + 5: clearly outside tolerance.
     m = Monitor()
     h, w = frame_shape[0], frame_shape[1]
-    det = Detection(bbox=(10, 10, w + 10, 50), confidence=0.9)
+    tol = int(min(w, h) * 0.15) + 5   # clearly past tolerance
+    det = Detection(bbox=(10, 10, w + tol, 50), confidence=0.9)
     r = m.check_pre_swap(frame_shape, detections=[det])
     assert r.fired and r.trigger is PreSwapTrigger.BBOX_OUT_OF_FRAME
 

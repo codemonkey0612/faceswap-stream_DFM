@@ -95,11 +95,20 @@ class BeautyConfig(BaseModel):
     smoothing: SmoothingConfig = Field(default_factory=SmoothingConfig)
 
 
+class HairRecolorConfig(BaseModel):
+    enable: bool = False
+    target_bgr: list[int] = Field(default_factory=lambda: [30, 30, 30])
+    blend: float = 0.85
+    mask_threshold: float = 0.05
+    min_saturation: int = 20
+
+
 class AppConfig(BaseModel):
     capture: CaptureConfig = Field(default_factory=CaptureConfig)
     detection: DetectionConfig = Field(default_factory=DetectionConfig)
     swap: SwapConfig = Field(default_factory=SwapConfig)
     beauty: BeautyConfig = Field(default_factory=BeautyConfig)
+    hair_recolor: HairRecolorConfig = Field(default_factory=HairRecolorConfig)
     output: OutputConfig = Field(default_factory=OutputConfig)
     failsafe: FailsafeConfig = Field(default_factory=FailsafeConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)

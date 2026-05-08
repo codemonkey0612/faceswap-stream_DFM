@@ -12,6 +12,7 @@ from src.config import load_config
 from src.detection.face_detector import FaceDetector
 from src.failsafe import Gate
 from src.occlusion.face_parser import FaceParser
+from src.occlusion.hair_recolor import HairRecolor
 from src.occlusion.hand_masker import HandMasker
 from src.occlusion.xseg_masker import XSegMasker
 from src.output.preview import PreviewSink
@@ -57,6 +58,15 @@ def main(
     _parser_stride = 1 if "CUDAExecutionProvider" in _ort.get_available_providers() else 4
     face_parser  = FaceParser(stride=_parser_stride)  # gracefully disabled if model absent
 
+    hr_cfg = config.hair_recolor
+    hair_recolor = HairRecolor(
+        target_bgr=tuple(hr_cfg.target_bgr),  # type: ignore[arg-type]
+        blend=hr_cfg.blend,
+        mask_threshold=hr_cfg.mask_threshold,
+        min_saturation=hr_cfg.min_saturation,
+        enabled=hr_cfg.enable,
+    )
+
     webcam = Webcam(config.capture)
 
     if no_vcam:
@@ -74,7 +84,8 @@ def main(
     try:
         gate = Gate(sink, config.capture.width, config.capture.height)
         pipeline = Pipeline(config, gate, webcam, detector, swapper,
-                            hand_masker, xseg_masker, face_parser)
+                            hand_masker, xseg_masker, face_parser,
+                            hair_recolor=hair_recolor)
 
         def _handle_sigint(*_: object) -> None:
             log.info("sigint_received")

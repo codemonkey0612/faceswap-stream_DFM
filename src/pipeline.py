@@ -19,6 +19,7 @@ from src.detection.face_detector import FaceDetector
 from src.failsafe import Gate, Monitor
 from src.failsafe.monitor import MonitorConfig
 from src.occlusion.face_parser import FaceParser
+from src.occlusion.hair_recolor import HairRecolor
 from src.occlusion.hand_masker import HandMasker
 from src.occlusion.xseg_masker import XSegMasker
 from src.swap.dfm_swapper import DFMSwapper
@@ -35,6 +36,7 @@ class Pipeline:
         hand_masker: HandMasker,
         xseg_masker: XSegMasker | None = None,
         face_parser: FaceParser | None = None,
+        hair_recolor: HairRecolor | None = None,
         logger: structlog.BoundLogger | None = None,
     ) -> None:
         self.config = config
@@ -45,6 +47,7 @@ class Pipeline:
         self.hand_masker = hand_masker
         self.xseg_masker  = xseg_masker  or XSegMasker()   # disabled if model absent
         self.face_parser  = face_parser  or FaceParser()   # disabled if model absent
+        self.hair_recolor = hair_recolor or HairRecolor()  # enabled=False by default
         sc = config.beauty.smoothing
         self.skin_smoother = SkinSmoother(
             d=sc.d,
@@ -140,6 +143,7 @@ class Pipeline:
 
                 # --- BiSeNet: restore hair / headwear crossing the face ---
                 # hair_mask=1 where BiSeNet detected hair/hat class pixels.
+                hair_mask: np.ndarray | None = None
                 if self.face_parser.enabled:
                     hair_mask = self.face_parser.get_hair_mask_fullframe(
                         swap_result.aligned_crop,
@@ -149,6 +153,10 @@ class Pipeline:
                     if hair_mask.max() > 0.01:
                         composited     = _restore_occluded(composited, frame, hair_mask)
                         mask_for_check = mask_for_check * (1.0 - hair_mask)
+
+                # --- Hair recolor: tint restored hair to AI character color ---
+                if hair_mask is not None:
+                    composited = self.hair_recolor.apply(composited, hair_mask)
 
                 # --- Phase 1g: hand occlusion — restore real hands over swap ---
                 # hand_mask=1 where hands are; those pixels revert to original frame.
