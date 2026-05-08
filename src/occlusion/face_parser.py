@@ -79,7 +79,7 @@ class FaceParser:
                 "face_parser_disabled",
                 reason="model not found",
                 path=str(model_path),
-                hint="run: .venv\\Scripts\\python.exe scripts\\download_face_parser.py",
+                hint="run: python scripts/download_face_parser.py",
             )
             return
 

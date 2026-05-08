@@ -113,8 +113,8 @@ class AppConfig(BaseModel):
     failsafe: FailsafeConfig = Field(default_factory=FailsafeConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
 
-    # Sections we don't model yet (detection, swap, occlusion, beauty, ...)
-    # are permitted but not validated — they will be added as each module lands.
+    # extra="allow" so unknown top-level keys (e.g. future sections) are ignored
+    # rather than causing a validation error during forward-compatible upgrades.
     model_config = {"extra": "allow"}
 
 
