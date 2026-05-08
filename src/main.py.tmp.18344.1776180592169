@@ -1,0 +1,85 @@
+"""CLI entry point."""
+
+from __future__ import annotations
+
+import signal
+import sys
+
+import typer
+
+from src.capture.webcam import Webcam
+from src.config import load_config
+from src.detection.face_detector import FaceDetector
+from src.failsafe import Gate
+from src.output.preview import PreviewSink
+from src.output.virtual_camera import VirtualCamera
+from src.pipeline import Pipeline
+from src.swap.dfm_loader import DFMLoader
+from src.swap.dfm_swapper import DFMSwapper
+from src.utils.logger import configure_logging, get_logger
+
+app = typer.Typer(add_completion=False)
+
+
+@app.command()
+def main(
+    profile: str = typer.Option("live", help="Config profile: live | debug"),
+    no_vcam: bool = typer.Option(False, "--no-vcam", help="Use local preview window instead of OBS virtual camera (dev only)"),
+) -> None:
+    config = load_config(profile=profile)
+    configure_logging(
+        level=config.logging.level,
+        json_format=config.logging.format == "json",
+    )
+    log = get_logger("main")
+    log.info("starting", profile=profile)
+
+    detector = FaceDetector(
+        model_path=config.detection.model,
+        confidence_threshold=config.detection.confidence_threshold,
+        nms_threshold=config.detection.nms_threshold,
+        top_k=config.detection.top_k,
+    )
+
+    loader = DFMLoader(
+        model_path=config.swap.dfm_path,
+        providers=config.swap.providers,
+    )
+    swapper = DFMSwapper(loader, output_size=config.swap.input_size)
+
+    webcam = Webcam(config.capture)
+
+    if no_vcam:
+        log.info("preview_mode", note="local window only, not sending to OBS")
+        sink = PreviewSink()
+    else:
+        sink = VirtualCamera(
+            width=config.capture.width,
+            height=config.capture.height,
+            fps=config.capture.fps,
+            fmt=config.output.virtual_camera.fmt,
+        )
+        sink.start()
+
+    try:
+        gate = Gate(sink, config.capture.width, config.capture.height)
+        pipeline = Pipeline(config, gate, webcam, detector)
+
+        def _handle_sigint(*_: object) -> None:
+            log.info("sigint_received")
+            pipeline.stop()
+
+        signal.signal(signal.SIGINT, _handle_sigint)
+
+        try:
+            pipeline.run()
+        except Exception:
+            log.exception("pipeline_crashed")
+            sys.exit(1)
+    finally:
+        if hasattr(sink, "close"):
+            sink.close()
+
+
+if __name__ == "__main__":
+    app()

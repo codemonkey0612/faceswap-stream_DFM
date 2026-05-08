@@ -1,0 +1,53 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+Thumbs.db
+.DS_Store
+desktop.ini
+
+# Model weights (large, fetched via download_models.py)
+models/*.onnx
+models/*.pth
+models/*.dfm
+models/*.bin
+models/*.dll
+!models/.gitkeep
+!models/download_models.py
+
+# Recorded training data (confidential, large)
+training_data/
+recordings/
+
+# Logs & runtime artifacts
+logs/
+*.log
+failsafe.log
+preview_captures/
+
+# TensorRT engine cache
+*.trt
+*.engine
+.cache/
+
+# Temp
+*.tmp
+*.bak
+*~

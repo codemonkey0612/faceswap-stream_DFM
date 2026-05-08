@@ -1,0 +1,21 @@
+# Profile: live -- streaming PC (RTX 5080, full resolution, TensorRT)
+# Overlays on top of config/default.yaml
+
+capture:
+  width: 1920
+  height: 1080
+  fps: 30
+
+swap:
+  providers:
+    - TensorrtExecutionProvider
+    - CUDAExecutionProvider
+
+beauty:
+  enable: true
+
+output:
+  virtual_camera:
+    backend: obs
+  preview:
+    enable: false

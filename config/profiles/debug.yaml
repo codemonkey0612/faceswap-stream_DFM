@@ -1,0 +1,21 @@
+# Profile: debug -- dev PC (CPU/CUDA, lower res, local preview window)
+# Usage: .venv\Scripts\python.exe -m src.main --profile debug --no-vcam
+
+capture:
+  width: 1280
+  height: 720
+  fps: 30
+
+swap:
+  providers:
+    - CUDAExecutionProvider
+    - CPUExecutionProvider
+
+beauty:
+  enable: false   # skip bilateral filter to save CPU on dev PC
+
+output:
+  virtual_camera:
+    backend: obs
+  preview:
+    enable: true   # show local window (use with --no-vcam)

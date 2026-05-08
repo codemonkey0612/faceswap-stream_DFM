@@ -1,0 +1,9 @@
+# Development profile - local preview window enabled, verbose logs.
+# DO NOT use during actual streaming.
+
+output:
+  preview:
+    enable: true
+
+logging:
+  level: DEBUG

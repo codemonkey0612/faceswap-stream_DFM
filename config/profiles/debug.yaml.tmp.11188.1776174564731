@@ -1,0 +1,14 @@
+# Development profile — for dev PC with generic 640x480 USB webcam.
+# DO NOT use during actual streaming.
+
+capture:
+  width: 640
+  height: 480
+  fps: 30
+
+output:
+  preview:
+    enable: true
+
+logging:
+  level: DEBUG

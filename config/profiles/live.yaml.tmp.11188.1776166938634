@@ -1,0 +1,8 @@
+# Streaming profile - production defaults, no preview window, strict failsafe.
+
+output:
+  preview:
+    enable: false
+
+logging:
+  level: INFO

@@ -1,0 +1,77 @@
+# Default pipeline configuration.
+# Override with --profile <name> which loads config/profiles/<name>.yaml on top.
+
+capture:
+  device_index: 0            # OBSBOT Meet 2 4K (index may vary)
+  width: 1920
+  height: 1080
+  fps: 30
+  buffer_size: 2             # bounded queue, drop-old policy
+
+detection:
+  model: models/face_detection_yunet_2023mar.onnx
+  confidence_threshold: 0.70 # below this, pre-swap failsafe triggers
+  nms_threshold: 0.30
+  top_k: 100
+  min_face_area_ratio: 0.005 # face must occupy >=0.5% of frame
+
+swap:
+  dfm_path: models/placeholder.dfm
+  input_size: 256            # placeholder.dfm is 256x256; update after DFL training
+  providers:
+    - TensorrtExecutionProvider
+    - CUDAExecutionProvider
+
+occlusion:
+  face_parser:
+    model: models/face_parser.onnx
+    input_size: 512
+  xseg:
+    model: models/xseg.onnx
+    input_size: 256
+  mask_fusion:
+    # Final alpha = min(parser_mask, 1 - occluder_mask)
+    feather_radius: 5        # pixels, soft edges
+    erode_iterations: 1
+
+beauty:
+  enable: true
+  # Skin smoothing applies ONLY to (frame - swap_region).
+  # I.e. it smooths the user's own visible skin (neck, jaw edges, forehead margin),
+  # NEVER the swapped face itself.
+  smoothing:
+    method: bilateral        # bilateral | guided
+    sigma_color: 25
+    sigma_space: 15
+
+compositing:
+  blend_mode: alpha          # alpha | poisson
+  color_transfer: true       # match swapped face tone to surrounding skin
+
+failsafe:
+  # HARD RULE: the virtual camera may only be written from failsafe/gate.py.
+  # Any of these conditions force a BLACK frame output.
+  pre_swap:
+    require_face: true
+    min_confidence: 0.70
+    min_face_area_ratio: 0.005
+    bbox_must_be_inside_frame: true
+  post_composite:
+    require_nonzero_mask: true
+    require_swap_bbox_match: true  # swap region must align with detected bbox
+    forbid_nan_pixels: true
+  on_trigger:
+    action: black_frame      # LOCKED: must be black_frame per R-S2
+  logging:
+    path: logs/failsafe.log
+
+output:
+  virtual_camera:
+    backend: obs             # pyvirtualcam backend
+    fmt: BGR                 # pyvirtualcam pixel format
+  preview:
+    enable: false            # local debug window; MUST be false in production
+
+logging:
+  level: INFO
+  format: json
