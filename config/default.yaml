@@ -16,8 +16,8 @@ detection:
   min_face_area_ratio: 0.005 # face must occupy >=0.5% of frame
 
 swap:
-  dfm_path: models/placeholder.dfm
-  input_size: 256            # placeholder.dfm is 256x256; update after DFL training
+  dfm_path: models/momo_SAEHD_model.dfm   # trained DFM (DeepFaceLive export, 256, NHWC/BGR)
+  input_size: 256
   providers:
     - TensorrtExecutionProvider
     - CUDAExecutionProvider

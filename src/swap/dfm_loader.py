@@ -31,6 +31,15 @@ class DFMModelInfo:
     input_size: int          # square: input_size × input_size
     output_face_name: str    # swapped face output
     output_mask_name: str    # blend mask output  ('' if absent)
+    nhwc: bool = True        # True = (N,H,W,C) layout (DeepFaceLive DFM); False = (N,C,H,W)
+
+
+# DeepFaceLive DFM output names (exported by DFL's "export DFM"):
+#   in_face:0  ->  out_face_mask:0, out_celeb_face:0, out_celeb_face_mask:0
+# The swapped (celebrity) face is out_celeb_face; its blend mask is
+# out_celeb_face_mask. Note these are NOT outputs[0]/[1] — select by name.
+_DFL_FACE_OUTPUT = "out_celeb_face"
+_DFL_MASK_OUTPUT = "out_celeb_face_mask"
 
 
 class DFMLoader:
@@ -75,17 +84,25 @@ class DFMLoader:
             return
 
         input_name = inputs[0].name
-        input_shape = inputs[0].shape   # e.g. [1, 3, 256, 256]
-        input_size = (
-            int(input_shape[-1])
-            if (len(input_shape) >= 2 and isinstance(input_shape[-1], int))
-            else 256
-        )
+        input_shape = inputs[0].shape   # DFL DFM: [N, 256, 256, 3] (NHWC)
 
-        # Identify face and mask output names by convention.
+        # Detect layout from the channel position. NHWC if the last dim is 3
+        # (DeepFaceLive convention); NCHW if the second dim is 3.
+        nhwc = not (len(input_shape) == 4 and input_shape[1] == 3)
+
+        # Spatial size is H (square). NHWC -> shape[1]; NCHW -> shape[2].
+        size_dim = input_shape[1] if nhwc else input_shape[2]
+        input_size = int(size_dim) if isinstance(size_dim, int) and size_dim > 0 else 256
+
+        # Select face/mask outputs BY NAME (DFL DFM order is mask-first, so
+        # index-based selection picks the wrong tensor). Fall back to index.
         output_names = [o.name for o in outputs]
-        face_name = output_names[0] if output_names else ""
-        mask_name = output_names[1] if len(output_names) > 1 else ""
+        face_name = next((n for n in output_names if _DFL_FACE_OUTPUT in n), "")
+        mask_name = next((n for n in output_names if _DFL_MASK_OUTPUT in n), "")
+        if not face_name:
+            # Non-DFL model: assume first output is the face, second the mask.
+            face_name = output_names[0] if output_names else ""
+            mask_name = output_names[1] if len(output_names) > 1 else ""
 
         self._session = session
         self._info = DFMModelInfo(
@@ -93,6 +110,7 @@ class DFMLoader:
             input_size=input_size,
             output_face_name=face_name,
             output_mask_name=mask_name,
+            nhwc=nhwc,
         )
         self._log.info(
             "dfm_loaded",
@@ -127,28 +145,57 @@ class DFMLoader:
 
         h, w = face_crop.shape[:2]
 
-        # Preprocess: BGR → RGB, HWC → NCHW, normalize to [0, 1].
-        rgb = face_crop[:, :, ::-1].astype(np.float32) / 255.0
-        blob = rgb.transpose(2, 0, 1)[np.newaxis]   # (1, 3, H, W)
-
-        outputs = self._session.run(None, {info.input_name: blob})
-
-        # Decode swapped face: NCHW float [0,1] → HWC uint8 BGR.
-        face_out = outputs[0][0]                     # (3, H, W)
-        face_out = np.clip(face_out, 0.0, 1.0)
-        face_bgr = (face_out.transpose(1, 2, 0)[:, :, ::-1] * 255).astype(np.uint8)
-
-        # Decode mask: (1, 1, H, W) or (1, H, W) float → (H, W) float32.
-        if len(outputs) > 1 and info.output_mask_name:
-            mask_raw = outputs[1][0]
-            if mask_raw.ndim == 3:
-                mask_raw = mask_raw[0]   # (1, H, W) → (H, W)
-            mask = np.clip(mask_raw, 0.0, 1.0).astype(np.float32)
+        # DeepFaceLive DFM uses BGR [0,1] for BOTH input and output — no channel
+        # flip. NHWC (1, H, W, 3) for DFL models; legacy NCHW gets the transpose.
+        inp = face_crop.astype(np.float32) / 255.0
+        if info.nhwc:
+            blob = inp[np.newaxis]                  # (1, H, W, 3)
         else:
-            # No mask output — use a solid elliptical mask.
+            blob = inp.transpose(2, 0, 1)[np.newaxis]   # (1, 3, H, W)
+
+        # Request only the tensors we need, by name when available.
+        out_names = [n for n in (info.output_face_name, info.output_mask_name) if n]
+        results = self._session.run(out_names or None, {info.input_name: blob})
+        outputs = dict(zip(out_names, results)) if out_names else None
+
+        # --- Decode swapped face → HWC uint8 BGR ---
+        face_out = outputs[info.output_face_name] if outputs else results[0]
+        face_out = np.asarray(face_out)[0]          # drop batch dim
+        if not info.nhwc:                           # (3, H, W) → (H, W, 3)
+            face_out = face_out.transpose(1, 2, 0)
+        face_out = np.clip(face_out, 0.0, 1.0)
+        face_bgr = (face_out * 255).astype(np.uint8)   # already BGR
+
+        # --- Decode blend mask → (H, W) float32, feathered ---
+        if outputs is not None and info.output_mask_name:
+            mask_raw = np.asarray(outputs[info.output_mask_name])[0]  # (H,W,1) or (1,H,W)
+            mask = np.clip(np.squeeze(mask_raw), 0.0, 1.0).astype(np.float32)
+            mask = _feather_mask(mask)   # soften the hard DFM edge to avoid a seam
+        else:
             mask = _ellipse_mask(h, w)
 
         return face_bgr, mask
+
+
+def _feather_mask(mask: np.ndarray, erode_frac: float = 0.04, blur_frac: float = 0.06) -> np.ndarray:
+    """Erode then Gaussian-blur the DFM mask so paste-back has a soft edge.
+
+    The raw out_celeb_face_mask has a hard, near-rectangular boundary that
+    shows as a seam when composited. Eroding pulls the edge inward onto the
+    face; blurring fades it. Fractions are relative to the crop height so this
+    scales with input_size.
+    """
+    try:
+        import cv2
+        h = mask.shape[0]
+        e = max(1, int(h * erode_frac))
+        b = max(1, int(h * blur_frac))
+        b = b + 1 if b % 2 == 0 else b          # Gaussian kernel must be odd
+        m = cv2.erode(mask, np.ones((e, e), np.float32), iterations=1)
+        m = cv2.GaussianBlur(m, (b, b), 0)
+        return np.clip(m, 0.0, 1.0).astype(np.float32)
+    except Exception:
+        return mask
 
 
 def _ellipse_mask(h: int, w: int) -> np.ndarray:

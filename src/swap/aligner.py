@@ -15,14 +15,18 @@ import numpy as np
 
 
 # Canonical landmark positions inside a 256×256 crop.
-# Source: commonly used ArcFace / DFL reference template, scaled to 256px.
+# Derived empirically from the DFM's own training data: YuNet 5-point landmarks
+# averaged over 295 DFL whole_face (wf) aligned crops at 256px. Using this
+# template makes align_face() reproduce the exact crop geometry the DFM was
+# trained on, so the live pipeline feeds the model faces it recognises.
+# (A generic ArcFace template produces a tighter/lower crop the DFM rejects.)
 _REF_LANDMARKS_256 = np.array(
     [
-        [85.82,  106.26],  # right eye center
-        [170.18, 106.26],  # left eye center
-        [128.00, 158.57],  # nose tip
-        [92.00,  204.96],  # right mouth corner
-        [164.00, 204.96],  # left mouth corner
+        [96.50,  105.43],  # right eye center
+        [153.24, 104.83],  # left eye center
+        [124.87, 142.59],  # nose tip
+        [102.40, 170.30],  # right mouth corner
+        [150.77, 170.09],  # left mouth corner
     ],
     dtype=np.float32,
 )
