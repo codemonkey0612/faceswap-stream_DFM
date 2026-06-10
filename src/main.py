@@ -5,6 +5,12 @@ from __future__ import annotations
 import signal
 import sys
 
+# Register CUDA DLL paths BEFORE importing anything that pulls in onnxruntime,
+# so the DFM swap runs on GPU regardless of how this is launched.
+from src.utils.cuda_paths import ensure_cuda_dll_path
+
+_CUDA_DIRS = ensure_cuda_dll_path()
+
 import typer
 
 from src.capture.webcam import Webcam
@@ -36,7 +42,7 @@ def main(
         json_format=config.logging.format == "json",
     )
     log = get_logger("main")
-    log.info("starting", profile=profile)
+    log.info("starting", profile=profile, cuda_dll_dirs=len(_CUDA_DIRS))
 
     detector = FaceDetector(
         model_path=config.detection.model,
