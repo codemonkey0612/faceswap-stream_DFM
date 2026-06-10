@@ -30,9 +30,9 @@ swap_extra:
   color_match: true          # LAB colour-match swap to real skin -> softer neck seam
 
 hand:
-  stride: 2                  # run MediaPipe every 2nd frame -> recovers FPS / less heat
+  stride: 1                  # run MediaPipe every 2nd frame -> recovers FPS / less heat
   reshape_enable: true       # lengthen the short pinky (privacy)
-  pinky_gain: 0.6
+  pinky_gain: 2.5
   ring_gain: 0.0
 
 output:
