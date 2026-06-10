@@ -108,12 +108,25 @@ class HairRecolorConfig(BaseModel):
     min_saturation: int = 20
 
 
+class HandConfig(BaseModel):
+    stride: int = 2               # run MediaPipe every N frames (perf)
+    reshape_enable: bool = False  # lengthen short fingers (privacy)
+    pinky_gain: float = 0.6       # pinky extension amount
+    ring_gain: float = 0.0        # optional ring-finger extension
+
+
+class SwapExtraConfig(BaseModel):
+    color_match: bool = True      # LAB colour-match swap to real skin (neck seam)
+
+
 class AppConfig(BaseModel):
     capture: CaptureConfig = Field(default_factory=CaptureConfig)
     detection: DetectionConfig = Field(default_factory=DetectionConfig)
     swap: SwapConfig = Field(default_factory=SwapConfig)
     beauty: BeautyConfig = Field(default_factory=BeautyConfig)
     hair_recolor: HairRecolorConfig = Field(default_factory=HairRecolorConfig)
+    hand: HandConfig = Field(default_factory=HandConfig)
+    swap_extra: SwapExtraConfig = Field(default_factory=SwapExtraConfig)
     output: OutputConfig = Field(default_factory=OutputConfig)
     failsafe: FailsafeConfig = Field(default_factory=FailsafeConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)

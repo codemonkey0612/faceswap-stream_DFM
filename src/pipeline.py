@@ -21,6 +21,7 @@ from src.failsafe.monitor import MonitorConfig
 from src.occlusion.face_parser import FaceParser
 from src.occlusion.hair_recolor import HairRecolor
 from src.occlusion.hand_masker import HandMasker
+from src.occlusion.hand_reshaper import HandReshaper
 from src.occlusion.xseg_masker import XSegMasker
 from src.swap.dfm_swapper import DFMSwapper
 
@@ -37,6 +38,7 @@ class Pipeline:
         xseg_masker: XSegMasker | None = None,
         face_parser: FaceParser | None = None,
         hair_recolor: HairRecolor | None = None,
+        hand_reshaper: "HandReshaper | None" = None,
         logger: structlog.BoundLogger | None = None,
     ) -> None:
         self.config = config
@@ -48,6 +50,7 @@ class Pipeline:
         self.xseg_masker  = xseg_masker  or XSegMasker()   # disabled if model absent
         self.face_parser  = face_parser  or FaceParser()   # disabled if model absent
         self.hair_recolor = hair_recolor or HairRecolor()  # enabled=False by default
+        self.hand_reshaper = hand_reshaper or HandReshaper()  # enabled=False by default
         sc = config.beauty.smoothing
         self.skin_smoother = SkinSmoother(
             d=sc.d,
@@ -164,6 +167,16 @@ class Pipeline:
                 if hand_mask.max() > 0.0:
                     composited     = _restore_occluded(composited, frame, hand_mask)
                     mask_for_check = mask_for_check * (1.0 - hand_mask)
+
+                # --- Hand reshape — privacy warp for distinctive finger geometry ---
+                # Runs on the restored (real) hand pixels using the cached
+                # MediaPipe landmarks. No-op unless enabled in config.
+                if self.hand_reshaper.enabled:
+                    hands_px = self.hand_masker.last_landmarks_px(
+                        frame.shape[1], frame.shape[0]
+                    )
+                    if hands_px:
+                        composited = self.hand_reshaper.apply(composited, hands_px)
 
                 # --- Phase 1h: skin smoother — soften user's skin outside swap ---
                 composited = self.skin_smoother.apply(composited, mask_for_check)

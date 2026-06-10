@@ -33,10 +33,12 @@ class DFMSwapper:
         self,
         loader: DFMLoader,
         output_size: int = 256,
+        color_match: bool = True,
         logger: structlog.BoundLogger | None = None,
     ) -> None:
         self._loader = loader
         self._size = output_size
+        self._color_match = color_match
         self._log = logger or structlog.get_logger("swap.dfm_swapper")
         if not loader.loaded:
             self._log.info("dfm_swapper_identity_mode",
@@ -68,6 +70,13 @@ class DFMSwapper:
         else:
             swapped = aligned
             mask_crop = _soft_ellipse(self._size)
+
+        # --- 2b. Colour-match the swapped face to the user's real skin ---
+        # Reduces the visible seam at the neck/jaw boundary by matching the
+        # swap's colour statistics (in LAB) to the aligned source crop inside
+        # the face mask. Cheap (operates on the 256x256 crop only).
+        if self._color_match and self._loader.loaded:
+            swapped = _color_transfer(swapped, aligned, mask_crop)
 
         # --- 3. Paste swapped crop back, compositing only inside the swap ROI ---
         h, w = frame.shape[:2]
@@ -112,6 +121,35 @@ class DFMSwapper:
             aligned_crop=dummy_crop,
             affine_M=dummy_M,
         )
+
+
+def _color_transfer(
+    src: np.ndarray,
+    ref: np.ndarray,
+    mask: np.ndarray,
+    strength: float = 0.7,
+) -> np.ndarray:
+    """Match `src` colour statistics to `ref` within `mask` (Reinhard, LAB).
+
+    src      : (S, S, 3) uint8 BGR — swapped face.
+    ref      : (S, S, 3) uint8 BGR — aligned source crop (user's real face).
+    mask     : (S, S) float32 [0,1] — face region to compute stats over.
+    strength : 0..1 blend between original and fully-matched result.
+
+    Returns colour-corrected `src`. Falls back to `src` if the mask is empty.
+    """
+    m = mask > 0.5
+    if m.sum() < 50:
+        return src
+    s_lab = cv2.cvtColor(src, cv2.COLOR_BGR2LAB).astype(np.float32)
+    r_lab = cv2.cvtColor(ref, cv2.COLOR_BGR2LAB).astype(np.float32)
+    out = s_lab.copy()
+    for c in range(3):
+        sm, ss = s_lab[:, :, c][m].mean(), s_lab[:, :, c][m].std() + 1e-6
+        rm, rs = r_lab[:, :, c][m].mean(), r_lab[:, :, c][m].std() + 1e-6
+        out[:, :, c] = (s_lab[:, :, c] - sm) / ss * rs + rm
+    out = s_lab * (1.0 - strength) + out * strength
+    return cv2.cvtColor(np.clip(out, 0, 255).astype(np.uint8), cv2.COLOR_LAB2BGR)
 
 
 def _soft_ellipse(size: int) -> np.ndarray:

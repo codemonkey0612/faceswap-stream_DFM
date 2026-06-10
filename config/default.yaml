@@ -57,6 +57,15 @@ hair_recolor:
   mask_threshold: 0.05       # ignore hair_mask pixels below this alpha
   min_saturation: 20         # OpenCV HSV [0,255]; below this S-blend is gated
 
+swap_extra:
+  color_match: true          # LAB colour-match swap to real skin (softens neck seam)
+
+hand:
+  stride: 2                  # run MediaPipe hand detection every N frames (perf/heat)
+  reshape_enable: false      # lengthen short fingers (privacy); on in live profile
+  pinky_gain: 0.6
+  ring_gain: 0.0
+
 compositing:
   blend_mode: alpha          # alpha | poisson
   color_transfer: true       # match swapped face tone to surrounding skin

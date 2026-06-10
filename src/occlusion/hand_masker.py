@@ -91,9 +91,19 @@ class HandMasker:
         min_presence_conf: float = 0.5,
         min_tracking_conf: float = 0.5,
         feather_radius: int = 15,
+        stride: int = 1,
         logger: structlog.BoundLogger | None = None,
     ) -> None:
         self._feather = feather_radius
+        # Run MediaPipe every `stride` frames and reuse the cached mask in
+        # between. MediaPipe on the CPU is the heaviest per-frame cost at 720p;
+        # stride 2-3 roughly halves its load (hands move slowly enough that a
+        # 1-2 frame stale mask is invisible). The latest pixel-space landmarks
+        # are also cached so the hand reshaper can run every frame cheaply.
+        self._stride = max(1, int(stride))
+        self._frame_count = 0
+        self._cached_mask: np.ndarray | None = None
+        self._last_landmarks: list[list[tuple[float, float]]] = []  # normalised [0,1]
         self._log = logger or structlog.get_logger("occlusion.hand_masker")
         self._landmarker = None
         self._t0 = time.monotonic()
@@ -132,9 +142,17 @@ class HandMasker:
         """Generate hand occlusion mask from a BGR frame.
 
         Returns (H, W) float32 in [0, 1]. All-zeros if disabled or no hands.
+        On skipped (stride) frames, returns the cached mask.
         """
         h, w = frame_bgr.shape[:2]
         if self._landmarker is None:
+            return np.zeros((h, w), dtype=np.float32)
+
+        self._frame_count += 1
+        # Skip inference on non-stride frames; reuse the cached mask.
+        if self._stride > 1 and (self._frame_count % self._stride) != 0:
+            if self._cached_mask is not None and self._cached_mask.shape == (h, w):
+                return self._cached_mask
             return np.zeros((h, w), dtype=np.float32)
 
         import mediapipe as mp
@@ -151,13 +169,30 @@ class HandMasker:
             return np.zeros((h, w), dtype=np.float32)
 
         if not result.hand_landmarks:
-            return np.zeros((h, w), dtype=np.float32)
+            self._last_landmarks = []
+            self._cached_mask = np.zeros((h, w), dtype=np.float32)
+            return self._cached_mask
 
         landmarks_list = [
             [(lm.x, lm.y) for lm in hand]
             for hand in result.hand_landmarks
         ]
-        return landmarks_to_mask(h, w, landmarks_list, self._feather)
+        self._last_landmarks = landmarks_list
+        mask = landmarks_to_mask(h, w, landmarks_list, self._feather)
+        self._cached_mask = mask
+        return mask
+
+    def last_landmarks_px(self, w: int, h: int) -> list[np.ndarray]:
+        """Most recent hand landmarks in pixel coords: list of (21, 2) float32 arrays.
+
+        Empty list if no hand was detected on the last inference frame.
+        Used by HandReshaper to warp finger geometry.
+        """
+        out: list[np.ndarray] = []
+        for hand in self._last_landmarks:
+            pts = np.array([(x * w, y * h) for x, y in hand], dtype=np.float32)
+            out.append(pts)
+        return out
 
     def close(self) -> None:
         if self._landmarker is not None:

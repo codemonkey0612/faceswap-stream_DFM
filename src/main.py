@@ -20,6 +20,7 @@ from src.failsafe import Gate
 from src.occlusion.face_parser import FaceParser
 from src.occlusion.hair_recolor import HairRecolor
 from src.occlusion.hand_masker import HandMasker
+from src.occlusion.hand_reshaper import HandReshaper
 from src.occlusion.xseg_masker import XSegMasker
 from src.output.preview import PreviewSink
 from src.output.virtual_camera import VirtualCamera
@@ -56,9 +57,13 @@ def main(
         model_path=config.swap.dfm_path,
         providers=config.swap.providers,
     )
-    swapper = DFMSwapper(loader, output_size=config.swap.input_size)
+    swapper = DFMSwapper(
+        loader,
+        output_size=config.swap.input_size,
+        color_match=config.swap_extra.color_match,
+    )
 
-    hand_masker  = HandMasker()   # gracefully disabled if model not found
+    hand_masker  = HandMasker(stride=config.hand.stride)  # disabled if model absent
     xseg_masker  = XSegMasker()  # gracefully disabled if models/xseg.onnx absent
     # stride=1 on GPU (every frame); stride=4 on CPU (BiSeNet 512x512 is slow without CUDA)
     import onnxruntime as _ort
@@ -72,6 +77,13 @@ def main(
         mask_threshold=hr_cfg.mask_threshold,
         min_saturation=hr_cfg.min_saturation,
         enabled=hr_cfg.enable,
+    )
+
+    hand_cfg = config.hand
+    hand_reshaper = HandReshaper(
+        enable=hand_cfg.reshape_enable,
+        pinky_gain=hand_cfg.pinky_gain,
+        ring_gain=hand_cfg.ring_gain,
     )
 
     webcam = Webcam(config.capture)
@@ -92,7 +104,8 @@ def main(
         gate = Gate(sink, config.capture.width, config.capture.height)
         pipeline = Pipeline(config, gate, webcam, detector, swapper,
                             hand_masker, xseg_masker, face_parser,
-                            hair_recolor=hair_recolor)
+                            hair_recolor=hair_recolor,
+                            hand_reshaper=hand_reshaper)
 
         def _handle_sigint(*_: object) -> None:
             log.info("sigint_received")
