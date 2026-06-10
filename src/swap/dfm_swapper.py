@@ -15,7 +15,7 @@ import numpy as np
 import structlog
 
 from src.failsafe.monitor import Detection
-from src.swap.aligner import align_face, paste_back
+from src.swap.aligner import align_face, paste_back, swap_roi
 from src.swap.dfm_loader import DFMLoader
 
 
@@ -69,21 +69,28 @@ class DFMSwapper:
             swapped = aligned
             mask_crop = _soft_ellipse(self._size)
 
-        # --- 3. Paste swapped crop back into the original frame ---
-        composited = paste_back(frame, swapped, mask_crop, M)
+        # --- 3. Paste swapped crop back, compositing only inside the swap ROI ---
+        h, w = frame.shape[:2]
+        roi = swap_roi(self._size, M, frame.shape)
+        composited = paste_back(frame, swapped, mask_crop, M, roi=roi)
 
         # --- 4. Compute swap bbox in frame coords (for post-composite check) ---
         swap_bbox = _warp_bbox_back(self._size, M, frame.shape)
 
-        # --- 5. Build full-frame mask (for Monitor + skin smoother) ---
-        h, w = frame.shape[:2]
-        M_inv = cv2.invertAffineTransform(M)
-        mask_full = cv2.warpAffine(
-            mask_crop, M_inv, (w, h),
-            flags=cv2.INTER_LINEAR,
-            borderMode=cv2.BORDER_CONSTANT,
-            borderValue=0.0,
-        )
+        # --- 5. Build full-frame mask (warp only into the ROI, rest stays 0) ---
+        x1, y1, x2, y2 = roi
+        mask_full = np.zeros((h, w), dtype=np.float32)
+        if x2 > x1 and y2 > y1:
+            M_inv = cv2.invertAffineTransform(M)
+            M_roi = M_inv.copy()
+            M_roi[0, 2] -= x1
+            M_roi[1, 2] -= y1
+            mask_full[y1:y2, x1:x2] = cv2.warpAffine(
+                mask_crop, M_roi, (x2 - x1, y2 - y1),
+                flags=cv2.INTER_LINEAR,
+                borderMode=cv2.BORDER_CONSTANT,
+                borderValue=0.0,
+            )
 
         return SwapResult(
             composited=composited,

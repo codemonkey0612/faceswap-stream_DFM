@@ -17,11 +17,12 @@ import structlog
 
 from src.config import CaptureConfig
 
-# Try backends in this order. MSMF negotiates modern webcam modes (1080p30,
-# 4K30) on Windows 10/11 more reliably than DSHOW.
+# Try backends in this order. DSHOW is first because MSMF is slow to open and
+# slow to grab on the ASUS/OBSBOT streaming laptop (measured ~5 fps via MSMF vs
+# 30 fps via DSHOW). MSMF/ANY remain as fallbacks for other machines.
 _BACKENDS: list[tuple[str, int]] = [
-    ("MSMF", cv2.CAP_MSMF),
     ("DSHOW", cv2.CAP_DSHOW),
+    ("MSMF", cv2.CAP_MSMF),
     ("ANY", cv2.CAP_ANY),
 ]
 
@@ -50,7 +51,9 @@ class Webcam:
         if not cap.isOpened():
             return None
 
-        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+        # NOTE: we intentionally do NOT force MJPG fourcc. On DSHOW the OBSBOT/ASUS
+        # webcam delivers YUY2/NV12 natively; forcing MJPG can fail or slow the
+        # grab. Letting the backend pick its native format is faster here.
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.cfg.width)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.cfg.height)
         cap.set(cv2.CAP_PROP_FPS, self.cfg.fps)

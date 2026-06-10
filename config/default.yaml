@@ -2,9 +2,9 @@
 # Override with --profile <name> which loads config/profiles/<name>.yaml on top.
 
 capture:
-  device_index: 0            # OBSBOT Meet 2 4K (index may vary)
-  width: 1920
-  height: 1080
+  device_index: 1            # ASUS FHD / OBSBOT webcam (index 0 is the IR camera)
+  width: 1280
+  height: 720
   fps: 30
   buffer_size: 2             # bounded queue, drop-old policy
 
@@ -14,13 +14,14 @@ detection:
   nms_threshold: 0.30
   top_k: 100
   min_face_area_ratio: 0.005 # face must occupy >=0.5% of frame
+  detect_scale: 0.5          # run YuNet on a 0.5x frame, scale results back up
 
 swap:
   dfm_path: models/momo_SAEHD_model.dfm   # trained DFM (DeepFaceLive export, 256, NHWC/BGR)
   input_size: 256
-  providers:
-    - TensorrtExecutionProvider
+  providers:                 # TensorRT omitted (not installed -> ~10s startup stall)
     - CUDAExecutionProvider
+    - CPUExecutionProvider
 
 occlusion:
   face_parser:

@@ -73,11 +73,16 @@ class DetectionConfig(BaseModel):
     nms_threshold: float = 0.30
     top_k: int = 100
     min_face_area_ratio: float = 0.005
+    detect_scale: float = 0.5     # run YuNet on a 0.5x frame, scale results back up
 
 
 class SwapConfig(BaseModel):
     dfm_path: str | None = None          # None → identity pass-through
     input_size: int = 256                 # crop size fed to the DFM model
+    # CUDA first, CPU fallback. TensorRT is intentionally omitted: it's not
+    # installed on the streaming laptop and listing it costs a ~10s startup
+    # stall while ORT fails to load the TRT provider. Add it back only on a
+    # machine with the TensorRT libraries present.
     providers: list[str] = Field(
         default_factory=lambda: ["CUDAExecutionProvider", "CPUExecutionProvider"]
     )

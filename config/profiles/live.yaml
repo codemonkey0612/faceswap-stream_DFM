@@ -1,18 +1,30 @@
-# Profile: live -- streaming PC (RTX 5080, full resolution, TensorRT)
+# Profile: live -- streaming laptop (ASUS ROG Zephyrus G16, RTX 5090 Laptop)
 # Overlays on top of config/default.yaml
+#
+# Tuned for real-time on the laptop:
+#  - 1280x720 keeps per-frame CPU work (detect/composite) low; bump to 1080p
+#    only if FPS has headroom.
+#  - device_index 1 = ASUS FHD / OBSBOT webcam (index 0 is the IR camera).
+#  - DSHOW backend is forced in webcam.py (MSMF is slow on this laptop).
+#  - CUDA only (TensorRT not installed; listing it adds a ~10s startup stall).
 
 capture:
-  width: 1920
-  height: 1080
+  width: 1280
+  height: 720
   fps: 30
+  device_index: 1
+
+detection:
+  detect_scale: 0.5          # YuNet on a 0.5x frame -> ~4x faster detection
 
 swap:
   providers:
-    - TensorrtExecutionProvider
     - CUDAExecutionProvider
+    - CPUExecutionProvider
 
 beauty:
-  enable: true
+  enable: false              # bilateral filter is the heaviest CPU step; enable
+                             # only if FPS allows (it smooths skin outside the swap)
 
 output:
   virtual_camera:

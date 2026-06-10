@@ -77,13 +77,45 @@ def align_face(
     return aligned, M.astype(np.float32)
 
 
+def swap_roi(
+    size: int,
+    M: np.ndarray,
+    frame_shape: tuple[int, ...],
+    margin: float = 0.25,
+) -> tuple[int, int, int, int]:
+    """Axis-aligned bounding box (x1, y1, x2, y2) of the crop, mapped into the
+    frame via M_inv, clamped to frame bounds and padded by `margin`.
+
+    Compositing only inside this ROI instead of the whole frame is the main
+    real-time optimization: at 720p the swap region is ~300px, so this avoids
+    warping/blending ~10x more pixels than necessary.
+    """
+    corners = np.array([[0, 0], [size, 0], [size, size], [0, size]], dtype=np.float32)
+    M_inv = cv2.invertAffineTransform(M)
+    pts = (M_inv[:, :2] @ corners.T + M_inv[:, 2:]).T
+    h, w = frame_shape[:2]
+    bw = pts[:, 0].max() - pts[:, 0].min()
+    bh = pts[:, 1].max() - pts[:, 1].min()
+    pad_x, pad_y = bw * margin, bh * margin
+    x1 = max(0, int(pts[:, 0].min() - pad_x))
+    y1 = max(0, int(pts[:, 1].min() - pad_y))
+    x2 = min(w, int(pts[:, 0].max() + pad_x))
+    y2 = min(h, int(pts[:, 1].max() + pad_y))
+    return x1, y1, x2, y2
+
+
 def paste_back(
     frame: np.ndarray,
     swapped_crop: np.ndarray,
     mask_crop: np.ndarray,
     M: np.ndarray,
+    roi: tuple[int, int, int, int] | None = None,
 ) -> np.ndarray:
     """Paste `swapped_crop` back into `frame` using inverse of affine matrix `M`.
+
+    Compositing is restricted to `roi` (x1, y1, x2, y2) — the swap's bounding
+    box — so only that sub-region is warped and blended. The rest of the frame
+    is copied through untouched. This is the key real-time optimization.
 
     Parameters
     ----------
@@ -91,36 +123,40 @@ def paste_back(
     swapped_crop : swapped face (crop_size, crop_size, 3) uint8
     mask_crop    : blend mask (crop_size, crop_size) float32 in [0, 1]
     M            : affine matrix used in align_face (frame → crop space)
+    roi          : optional (x1, y1, x2, y2); computed from M if omitted.
 
     Returns
     -------
     composited : (H, W, 3) uint8 with face pasted back.
     """
     h, w = frame.shape[:2]
-    crop_size = swapped_crop.shape[0]
+    size = swapped_crop.shape[0]
+    if roi is None:
+        roi = swap_roi(size, M, frame.shape)
+    x1, y1, x2, y2 = roi
+    rw, rh = x2 - x1, y2 - y1
+    if rw <= 0 or rh <= 0:
+        return frame  # degenerate ROI — nothing to composite
 
-    # Invert the affine transform: crop space → frame space.
+    # Shift the inverse affine so it warps directly into ROI-local coordinates.
     M_inv = cv2.invertAffineTransform(M)
+    M_roi = M_inv.copy()
+    M_roi[0, 2] -= x1
+    M_roi[1, 2] -= y1
 
-    # Warp the swapped crop and its mask back to frame coordinates.
-    swapped_full = cv2.warpAffine(
-        swapped_crop, M_inv, (w, h),
-        flags=cv2.INTER_LINEAR,
-        borderMode=cv2.BORDER_TRANSPARENT,
+    swapped_roi = cv2.warpAffine(
+        swapped_crop, M_roi, (rw, rh),
+        flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT,
     )
-    mask_full = cv2.warpAffine(
-        mask_crop, M_inv, (w, h),
-        flags=cv2.INTER_LINEAR,
-        borderMode=cv2.BORDER_CONSTANT,
-        borderValue=0.0,
+    mask_roi = cv2.warpAffine(
+        mask_crop, M_roi, (rw, rh),
+        flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=0.0,
     )
+    if mask_roi.ndim == 2:
+        mask_roi = mask_roi[:, :, np.newaxis]
 
-    # Expand mask to 3 channels for broadcasting.
-    if mask_full.ndim == 2:
-        mask_full = mask_full[:, :, np.newaxis]
-
-    # Alpha-blend: result = mask * swapped + (1 - mask) * original
-    frame_f = frame.astype(np.float32)
-    swap_f = swapped_full.astype(np.float32)
-    composited = mask_full * swap_f + (1.0 - mask_full) * frame_f
-    return np.clip(composited, 0, 255).astype(np.uint8)
+    out = frame.copy()
+    region = out[y1:y2, x1:x2].astype(np.float32)
+    blended = mask_roi * swapped_roi.astype(np.float32) + (1.0 - mask_roi) * region
+    out[y1:y2, x1:x2] = np.clip(blended, 0, 255).astype(np.uint8)
+    return out

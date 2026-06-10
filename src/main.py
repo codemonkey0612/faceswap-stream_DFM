@@ -43,6 +43,7 @@ def main(
         confidence_threshold=config.detection.confidence_threshold,
         nms_threshold=config.detection.nms_threshold,
         top_k=config.detection.top_k,
+        detect_scale=config.detection.detect_scale,
     )
 
     loader = DFMLoader(
