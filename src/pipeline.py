@@ -175,6 +175,15 @@ class Pipeline:
                     hands_px = self.hand_masker.last_landmarks_px(
                         frame.shape[1], frame.shape[0]
                     )
+                    # Diagnostic: log hand-detection state periodically so we can
+                    # tell "no hand detected" from "reshape ran but invisible".
+                    if frame_idx % 30 == 0:
+                        self._log.info(
+                            "hand_reshape_state",
+                            hands_detected=len(hands_px),
+                            hand_mask_max=float(hand_mask.max()),
+                            reshaper_enabled=self.hand_reshaper.enabled,
+                        )
                     if hands_px:
                         composited = self.hand_reshaper.apply(composited, hands_px)
 
