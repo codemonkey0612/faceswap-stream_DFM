@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Akool Live Face Swap → OBS</title>
+<!-- Agora Web SDK (NG, 4.x) -->
+<script src="https://download.agora.io/sdk/release/AgoraRTC_N-4.23.4.js"></script>
+<style>
+  html, body { margin: 0; padding: 0; background: #000; overflow: hidden; height: 100%; }
+  /* The swapped output fills the whole window — this is what OBS captures. */
+  #swapped { position: fixed; inset: 0; width: 100vw; height: 100vh; background: #000; }
+  #swapped video { width: 100% !important; height: 100% !important; object-fit: cover !important; }
+  /* Local self-view is hidden off-screen (the camera must still publish). */
+  #local { position: fixed; left: -9999px; top: 0; width: 320px; height: 240px; }
+  #panel {
+    position: fixed; top: 10px; left: 10px; z-index: 10;
+    font: 13px/1.4 system-ui, sans-serif; color: #eee;
+    background: rgba(0,0,0,0.6); padding: 12px 14px; border-radius: 8px; max-width: 360px;
+  }
+  #panel input { width: 100%; box-sizing: border-box; margin: 3px 0 8px; padding: 6px; }
+  #panel button { padding: 8px 14px; margin-right: 6px; cursor: pointer; font-size: 14px; }
+  #status { margin-top: 8px; white-space: pre-wrap; font-size: 12px; color: #9f9; }
+  .hide { display: none !important; }
+</style>
+</head>
+<body>
+  <div id="swapped"></div>
+  <div id="local"></div>
+
+  <div id="panel">
+    <b>Akool Live Face Swap</b><br/>
+    <label>Client ID</label>
+    <input id="clientId" placeholder="clientId" />
+    <label>API Key (clientSecret)</label>
+    <input id="apiKey" placeholder="clientSecret" />
+    <label>Source face image URL (public)</label>
+    <input id="sourceUrl" placeholder="https://drive.google.com/uc?export=download&id=..." />
+    <label>Camera device (optional — leave blank for default)</label>
+    <input id="camLabel" placeholder="part of camera name, e.g. OBSBOT or FHD" />
+    <button id="startBtn">Start</button>
+    <button id="stopBtn" disabled>Stop</button>
+    <button id="hideBtn">Hide panel</button>
+    <div id="status">idle</div>
+  </div>
+
+<script>
+// ---------------------------------------------------------------------------
+// Akool live face swap, browser-side. Flow:
+//   getToken -> detect_faces(sourceUrl) -> faceswap/live/create
+//   -> join Agora channel, publish webcam, subscribe to the swapped remote user
+//   -> render the swapped video fullscreen for OBS to capture.
+// Session is closed on Stop / page unload so billing stops.
+// ---------------------------------------------------------------------------
+const AKOOL = "https://openapi.akool.com";
+const $ = (id) => document.getElementById(id);
+const log = (m) => { $("status").textContent = m; console.log("[akool]", m); };
+
+let client = null;       // Agora client
+let localTrack = null;   // local camera video track
+let session = null;      // { _id } for closing
+let token = null;
+
+async function getToken(clientId, clientSecret) {
+  const r = await fetch(`${AKOOL}/api/open/v3/getToken`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ clientId, clientSecret }),
+  });
+  const j = await r.json();
+  if (j.code !== 1000) throw new Error("getToken failed: " + JSON.stringify(j));
+  return j.token;
+}
+
+async function detectFace(tok, url) {
+  const r = await fetch(`${AKOOL}/interface/detect-api/detect_faces`, {
+    method: "POST",
+    headers: { "Authorization": "Bearer " + tok, "Content-Type": "application/json" },
+    body: JSON.stringify({ url, single_face: true, return_face_url: true }),
+  });
+  const j = await r.json();
+  if (j.error_code !== 0) throw new Error("detect failed: " + JSON.stringify(j));
+  // landmarks_str like "375,382:553,381:465,491:461,564"
+  const opts = j.faces_obj["0"].landmarks_str[0];
+  return opts;
+}
+
+async function createSession(tok, url, opts) {
+  const r = await fetch(`${AKOOL}/api/open/v3/faceswap/live/create`, {
+    method: "POST",
+    headers: { "Authorization": "Bearer " + tok, "Content-Type": "application/json" },
+    body: JSON.stringify({ sourceImage: [{ path: url, opts }] }),
+  });
+  const j = await r.json();
+  if (j.code !== 1000) throw new Error("create failed: " + JSON.stringify(j));
+  return j.data; // { _id, app_id, channel_id, front_user_id, front_rtc_token, ... }
+}
+
+async function closeSession(tok, id) {
+  try {
+    await fetch(`${AKOOL}/api/open/v3/faceswap/live/close`, {
+      method: "POST",
+      headers: { "Authorization": "Bearer " + tok, "Content-Type": "application/json" },
+      body: JSON.stringify({ _id: id }),
+    });
+  } catch (e) { console.warn("close error", e); }
+}
+
+async function pickCamera(labelHint) {
+  const cams = await AgoraRTC.getCameras();
+  if (labelHint) {
+    const m = cams.find(c => c.label.toLowerCase().includes(labelHint.toLowerCase()));
+    if (m) return m.deviceId;
+  }
+  return cams.length ? cams[0].deviceId : undefined;
+}
+
+async function start() {
+  try {
+    $("startBtn").disabled = true;
+    const clientId = $("clientId").value.trim();
+    const apiKey = $("apiKey").value.trim();
+    const sourceUrl = $("sourceUrl").value.trim();
+    const camHint = $("camLabel").value.trim();
+    if (!clientId || !apiKey || !sourceUrl) throw new Error("fill clientId / apiKey / sourceUrl");
+
+    log("getting token...");
+    token = await getToken(clientId, apiKey);
+
+    log("detecting face in source image...");
+    const opts = await detectFace(token, sourceUrl);
+    log("face ok: " + opts + "\ncreating session...");
+
+    session = await createSession(token, sourceUrl, opts);
+    log("session created. joining Agora...");
+
+    // Recommended live config: 640x480 @ 20fps.
+    AgoraRTC.setLogLevel(2);
+    client = AgoraRTC.createClient({ mode: "rtc", codec: "vp8" });
+
+    // The swapped video comes back as a REMOTE user on the channel.
+    client.on("user-published", async (user, mediaType) => {
+      await client.subscribe(user, mediaType);
+      if (mediaType === "video") {
+        log("swapped stream received ✓ (uid " + user.uid + ")");
+        const cont = $("swapped");
+        cont.innerHTML = "";
+        user.videoTrack.play(cont, { fit: "cover" });
+      }
+      if (mediaType === "audio") { /* ignore — audio handled by voice changer */ }
+    });
+    client.on("user-unpublished", (user) => { /* keep last frame */ });
+
+    await client.join(session.app_id, session.channel_id,
+                      session.front_rtc_token, parseInt(session.front_user_id, 10) || null);
+
+    const camId = await pickCamera(camHint);
+    localTrack = await AgoraRTC.createCameraVideoTrack({
+      cameraId: camId,
+      encoderConfig: { width: 640, height: 480, frameRate: 20, bitrateMin: 4000, bitrateMax: 5000 },
+    });
+    localTrack.play("local");           // hidden self-view
+    await client.publish([localTrack]); // send webcam to Akool
+
+    log("LIVE ✓  webcam published, waiting for swapped output...\n(Capture this window in OBS as a Browser/Window source.)");
+    $("stopBtn").disabled = false;
+  } catch (e) {
+    log("ERROR: " + e.message);
+    $("startBtn").disabled = false;
+    await stop();
+  }
+}
+
+async function stop() {
+  $("stopBtn").disabled = true;
+  try { if (localTrack) { localTrack.stop(); localTrack.close(); localTrack = null; } } catch {}
+  try { if (client) { await client.leave(); client = null; } } catch {}
+  if (token && session && session._id) { await closeSession(token, session._id); }
+  session = null;
+  log("stopped (session closed, billing stopped).");
+  $("startBtn").disabled = false;
+}
+
+$("startBtn").onclick = start;
+$("stopBtn").onclick = stop;
+$("hideBtn").onclick = () => $("panel").classList.add("hide");
+// Always close the session if the page/tab closes, so billing never runs on.
+window.addEventListener("beforeunload", () => {
+  if (token && session && session._id) {
+    navigator.sendBeacon &&
+      fetch(`${AKOOL}/api/open/v3/faceswap/live/close`, {
+        method: "POST", keepalive: true,
+        headers: { "Authorization": "Bearer " + token, "Content-Type": "application/json" },
+        body: JSON.stringify({ _id: session._id }),
+      });
+  }
+});
+</script>
+</body>
+</html>
